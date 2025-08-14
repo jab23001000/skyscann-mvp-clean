@@ -23,20 +23,27 @@ export async function getAmadeusToken() {
   return tokenCache.value!;
 }
 
-export async function amadeusSearchRoundtrip(q: {
-  origin: string; destination: string; departureDate: string; returnDate: string;
-  adults?: number; currencyCode?: string; nonStop?: boolean; travelClass?: string; max?: number;
+export async function amadeusSearchOffers(q: {
+  origin: string;
+  destination: string;
+  departureDate: string;
+  returnDate?: string;            // ← ahora opcional
+  adults?: number;
+  currencyCode?: string;
+  nonStop?: boolean;
+  travelClass?: string;
+  max?: number;
 }) {
   const token = await getAmadeusToken();
   const params = new URLSearchParams({
     originLocationCode: q.origin,
     destinationLocationCode: q.destination,
     departureDate: q.departureDate,
-    returnDate: q.returnDate,
     adults: String(q.adults ?? 1),
     currencyCode: q.currencyCode ?? "EUR",
     max: String(q.max ?? 50),
   });
+  if (q.returnDate) params.set("returnDate", q.returnDate);
   if (typeof q.nonStop === "boolean") params.set("nonStop", String(q.nonStop));
   if (q.travelClass) params.set("travelClass", q.travelClass);
 
