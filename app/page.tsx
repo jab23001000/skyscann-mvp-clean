@@ -1,103 +1,357 @@
-import Image from "next/image";
+"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+
+type Airport = { code: string; city: string; name: string };
+type Offer = {
+  id: string;
+  price_total: number;
+  currency: string;
+  carriers: string[];
+  stops: number;
+  duration_total_minutes: number;
+  outbound: {
+    departure: string;
+    arrival: string;
+    duration_minutes: number;
+    segments: string[];
+  };
+  inbound: {
+    departure: string;
+    arrival: string;
+    duration_minutes: number;
+    segments: string[];
+  } | null;
+};
+type SearchResponse = {
+  origin: string;
+  destination: string;
+  cached: boolean;
+  options: Offer[];
+};
+
+function minsToHM(m: number) {
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return `${h}h ${mm}m`;
+}
+function fmtDT(iso: string) {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      weekday: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      day: "2-digit",
+      month: "short",
+    });
+  } catch {
+    return iso;
+  }
+}
+function money(n: number, ccy = "EUR") {
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: ccy }).format(n);
+  } catch {
+    return `${n.toFixed(2)} ${ccy}`;
+  }
+}
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [airports, setAirports] = useState<Airport[]>([]);
+  const [loadingAirports, setLoadingAirports] = useState(true);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+  // Form state
+  const [mode, setMode] = useState<"exact" | "range">("exact");
+  const [destination, setDestination] = useState("BCN");
+  const [depDate, setDepDate] = useState("");
+  const [retDate, setRetDate] = useState("");
+  const [depStart, setDepStart] = useState("");
+  const [depEnd, setDepEnd] = useState("");
+  const [retStart, setRetStart] = useState("");
+  const [retEnd, setRetEnd] = useState("");
+  const [nonstop, setNonstop] = useState(false);
+  const [adults, setAdults] = useState(1);
+
+  // Results
+  const [res, setRes] = useState<SearchResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Local filters
+  const [maxPrice, setMaxPrice] = useState<number | null>(null);
+  const [onlyNonstop, setOnlyNonstop] = useState(false);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        setLoadingAirports(true);
+        const r = await fetch("/api/airports", { cache: "no-store" });
+        if (!r.ok) throw new Error("No se pudo cargar /api/airports");
+        const j = await r.json();
+        setAirports(j.airports ?? []);
+        // Si destino no está, elige BCN si existe
+        if (!j.airports?.some((a: Airport) => a.code === destination) && j.airports?.length) {
+          setDestination(j.airports[0].code);
+        }
+      } catch (e: any) {
+        console.error(e);
+      } finally {
+        setLoadingAirports(false);
+      }
+    };
+    run();
+  }, []);
+
+  const filteredOptions = useMemo(() => {
+    if (!res) return [];
+    return (res.options ?? [])
+      .filter(o => (maxPrice ? o.price_total <= maxPrice : true))
+      .filter(o => (onlyNonstop ? o.stops === 0 : true));
+  }, [res, maxPrice, onlyNonstop]);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr(null);
+    setRes(null);
+    setLoading(true);
+    try {
+      const body: any = {
+        destination: destination.trim().toUpperCase(),
+        adults,
+        nonstop,
+      };
+      if (mode === "exact") {
+        if (!depDate || !retDate) throw new Error("Pon fechas de ida y vuelta.");
+        body.departure_date = depDate;
+        body.return_date = retDate;
+      } else {
+        if (!depStart || !depEnd || !retStart || !retEnd) {
+          throw new Error("Completa los 4 campos de rango.");
+        }
+        body.departure_range = { start: depStart, end: depEnd };
+        body.return_range = { start: retStart, end: retEnd };
+      }
+
+      const t0 = performance.now();
+      const r = await fetch("/api/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const t1 = performance.now();
+      if (!r.ok) {
+        const j = await safeJson(r);
+        throw new Error(j?.error || `Error ${r.status}`);
+      }
+      const j: SearchResponse = await r.json();
+      // Guarda un límite de precio útil por defecto (p. ej. +20% del mínimo)
+      const min = Math.min(...(j.options?.map(o => o.price_total) ?? [0]));
+      setMaxPrice(Number.isFinite(min) ? Math.round(min * 1.2) : null);
+      setRes(j);
+      console.log(`/api/search tardó ${(t1 - t0).toFixed(0)}ms`);
+    } catch (e: any) {
+      setErr(e?.message ?? "Error desconocido");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function resetFilters() {
+    setMaxPrice(null);
+    setOnlyNonstop(false);
+  }
+
+  return (
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Buscador de vuelos (MVP)</h1>
+
+      <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, border: "1px solid #ddd", padding: 12, borderRadius: 8 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Origen</label>
+            <input value="MAD" readOnly style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 90 }} />
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Destino</label>
+            <select
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              disabled={loadingAirports}
+              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, minWidth: 200 }}
+            >
+              {airports.map(a => (
+                <option key={a.code} value={a.code}>
+                  {a.city} ({a.code}) — {a.name}
+                </option>
+              ))}
+              {airports.length === 0 && <option value="BCN">Barcelona (BCN)</option>}
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Modo de fechas</label>
+            <select value={mode} onChange={(e) => setMode(e.target.value as any)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }}>
+              <option value="exact">Fechas exactas</option>
+              <option value="range">Rango (máx 25 combinaciones)</option>
+            </select>
+          </div>
+
+          <div>
+            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Adultos</label>
+            <input
+              type="number"
+              min={1}
+              value={adults}
+              onChange={(e) => setAdults(parseInt(e.target.value || "1", 10))}
+              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 80 }}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+          </div>
+
+          <div style={{ alignSelf: "end" }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+              <input type="checkbox" checked={nonstop} onChange={(e) => setNonstop(e.target.checked)} />
+              Solo sin escalas
+            </label>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+
+        {mode === "exact" ? (
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#555" }}>Salida</label>
+              <input type="date" value={depDate} onChange={(e) => setDepDate(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+            </div>
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso</label>
+              <input type="date" value={retDate} onChange={(e) => setRetDate(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Salida: inicio</label>
+                <input type="date" value={depStart} onChange={(e) => setDepStart(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Salida: fin</label>
+                <input type="date" value={depEnd} onChange={(e) => setDepEnd(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso: inicio</label>
+                <input type="date" value={retStart} onChange={(e) => setRetStart(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso: fin</label>
+                <input type="date" value={retEnd} onChange={(e) => setRetEnd(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <button type="submit" disabled={loading} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #111", background: "#111", color: "#fff" }}>
+            {loading ? "Buscando..." : "Buscar"}
+          </button>
+          {res && (
+            <>
+              <span style={{ fontSize: 13, color: "#666" }}>
+                Resultado: {res.origin} → {res.destination} • {filteredOptions.length} opciones {res.cached ? "(caché)" : ""}
+              </span>
+              <button type="button" onClick={resetFilters} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ccc", background: "#f4f4f4" }}>
+                Limpiar filtros
+              </button>
+            </>
+          )}
+        </div>
+
+        {err && (
+          <div style={{ padding: 10, background: "#ffe8e8", border: "1px solid #f5a3a3", borderRadius: 8, color: "#b10000" }}>
+            {err}
+          </div>
+        )}
+      </form>
+
+      {res && res.options?.length > 0 && (
+        <section style={{ marginTop: 16 }}>
+          {/* Filtros locales */}
+          <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+            <div>
+              <label style={{ display: "block", fontSize: 12, color: "#555" }}>Precio máximo (€)</label>
+              <input
+                type="number"
+                min={0}
+                value={maxPrice ?? ""}
+                onChange={(e) => setMaxPrice(e.target.value ? parseInt(e.target.value, 10) : null)}
+                style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 140 }}
+              />
+            </div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={onlyNonstop} onChange={(e) => setOnlyNonstop(e.target.checked)} />
+              Solo sin escalas
+            </label>
+          </div>
+
+          {/* Tabla de resultados */}
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <Th>Precio</Th>
+                  <Th>Aerolíneas</Th>
+                  <Th>Escalas</Th>
+                  <Th>Duración total</Th>
+                  <Th>Ida</Th>
+                  <Th>Vuelta</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredOptions.map((o) => (
+                  <tr key={o.id} style={{ borderTop: "1px solid #eee" }}>
+                    <Td>{money(o.price_total, o.currency)}</Td>
+                    <Td>{o.carriers.join(", ")}</Td>
+                    <Td>{o.stops}</Td>
+                    <Td>{minsToHM(o.duration_total_minutes)}</Td>
+                    <Td>
+                      <div>{fmtDT(o.outbound.departure)} → {fmtDT(o.outbound.arrival)}</div>
+                      <div style={{ fontSize: 12, color: "#666" }}>{o.outbound.segments.join(" · ")}</div>
+                    </Td>
+                    <Td>
+                      {o.inbound ? (
+                        <>
+                          <div>{fmtDT(o.inbound.departure)} → {fmtDT(o.inbound.arrival)}</div>
+                          <div style={{ fontSize: 12, color: "#666" }}>{o.inbound.segments.join(" · ")}</div>
+                        </>
+                      ) : (
+                        <em style={{ color: "#666" }}>—</em>
+                      )}
+                    </Td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </main>
   );
+}
+
+function Th({ children }: { children: React.ReactNode }) {
+  return (
+    <th style={{ textAlign: "left", fontWeight: 600, fontSize: 13, padding: "10px 8px", borderBottom: "2px solid #ddd", whiteSpace: "nowrap" }}>
+      {children}
+    </th>
+  );
+}
+function Td({ children }: { children: React.ReactNode }) {
+  return <td style={{ padding: "10px 8px", verticalAlign: "top" }}>{children}</td>;
+}
+
+async function safeJson(r: Response) {
+  try { return await r.json(); } catch { return null; }
 }
