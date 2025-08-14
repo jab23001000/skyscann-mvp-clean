@@ -10,51 +10,21 @@ type Offer = {
   carriers: string[];
   stops: number;
   duration_total_minutes: number;
-  outbound: {
-    departure: string;
-    arrival: string;
-    duration_minutes: number;
-    segments: string[];
-  };
-  inbound: {
-    departure: string;
-    arrival: string;
-    duration_minutes: number;
-    segments: string[];
-  } | null;
+  outbound: { departure: string; arrival: string; duration_minutes: number; segments: string[]; };
+  inbound: { departure: string; arrival: string; duration_minutes: number; segments: string[]; } | null;
 };
-type SearchResponse = {
-  origin: string;
-  destination: string;
-  cached: boolean;
-  options: Offer[];
-};
+type SearchResponse = { origin: string; destination: string; cached: boolean; options: Offer[]; };
 
-function minsToHM(m: number) {
-  const h = Math.floor(m / 60);
-  const mm = m % 60;
-  return `${h}h ${mm}m`;
-}
+function minsToHM(m: number) { const h = Math.floor(m / 60); const mm = m % 60; return `${h}h ${mm}m`; }
 function fmtDT(iso: string) {
   try {
     const d = new Date(iso);
-    return d.toLocaleString(undefined, {
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      day: "2-digit",
-      month: "short",
-    });
-  } catch {
-    return iso;
-  }
+    return d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short" });
+  } catch { return iso; }
 }
 function money(n: number, ccy = "EUR") {
-  try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency: ccy }).format(n);
-  } catch {
-    return `${n.toFixed(2)} ${ccy}`;
-  }
+  try { return new Intl.NumberFormat(undefined, { style: "currency", currency: ccy }).format(n); }
+  catch { return `${n.toFixed(2)} ${ccy}`; }
 }
 
 export default function Home() {
@@ -62,7 +32,9 @@ export default function Home() {
   const [loadingAirports, setLoadingAirports] = useState(true);
 
   // Form state
+  const [tripType, setTripType] = useState<"oneway" | "roundtrip">("roundtrip");
   const [mode, setMode] = useState<"exact" | "range">("exact");
+  const [origin, setOrigin] = useState("MAD");
   const [destination, setDestination] = useState("BCN");
   const [depDate, setDepDate] = useState("");
   const [retDate, setRetDate] = useState("");
@@ -83,24 +55,16 @@ export default function Home() {
   const [onlyNonstop, setOnlyNonstop] = useState(false);
 
   useEffect(() => {
-    const run = async () => {
+    (async () => {
       try {
         setLoadingAirports(true);
         const r = await fetch("/api/airports", { cache: "no-store" });
         if (!r.ok) throw new Error("No se pudo cargar /api/airports");
         const j = await r.json();
         setAirports(j.airports ?? []);
-        // Si destino no está, elige BCN si existe
-        if (!j.airports?.some((a: Airport) => a.code === destination) && j.airports?.length) {
-          setDestination(j.airports[0].code);
-        }
-      } catch (e: any) {
-        console.error(e);
-      } finally {
-        setLoadingAirports(false);
-      }
-    };
-    run();
+      } catch (e) { console.error(e); }
+      finally { setLoadingAirports(false); }
+    })();
   }, []);
 
   const filteredOptions = useMemo(() => {
@@ -112,44 +76,45 @@ export default function Home() {
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setErr(null);
-    setRes(null);
-    setLoading(true);
+    setErr(null); setRes(null); setLoading(true);
     try {
       const body: any = {
+        origin: origin.trim().toUpperCase(),
         destination: destination.trim().toUpperCase(),
         adults,
         nonstop,
+        trip_type: tripType,
       };
+
       if (mode === "exact") {
-        if (!depDate || !retDate) throw new Error("Pon fechas de ida y vuelta.");
+        if (!depDate) throw new Error("Pon fecha de salida.");
         body.departure_date = depDate;
-        body.return_date = retDate;
-      } else {
-        if (!depStart || !depEnd || !retStart || !retEnd) {
-          throw new Error("Completa los 4 campos de rango.");
+        if (tripType === "roundtrip") {
+          if (!retDate) throw new Error("Pon fecha de regreso.");
+          body.return_date = retDate;
         }
+      } else {
+        if (!depStart || !depEnd) throw new Error("Completa el rango de salida.");
         body.departure_range = { start: depStart, end: depEnd };
-        body.return_range = { start: retStart, end: retEnd };
+        if (tripType === "roundtrip") {
+          if (!retStart || !retEnd) throw new Error("Completa el rango de regreso.");
+          body.return_range = { start: retStart, end: retEnd };
+        }
       }
 
-      const t0 = performance.now();
       const r = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const t1 = performance.now();
       if (!r.ok) {
         const j = await safeJson(r);
         throw new Error(j?.error || `Error ${r.status}`);
       }
       const j: SearchResponse = await r.json();
-      // Guarda un límite de precio útil por defecto (p. ej. +20% del mínimo)
       const min = Math.min(...(j.options?.map(o => o.price_total) ?? [0]));
       setMaxPrice(Number.isFinite(min) ? Math.round(min * 1.2) : null);
       setRes(j);
-      console.log(`/api/search tardó ${(t1 - t0).toFixed(0)}ms`);
     } catch (e: any) {
       setErr(e?.message ?? "Error desconocido");
     } finally {
@@ -157,10 +122,9 @@ export default function Home() {
     }
   }
 
-  function resetFilters() {
-    setMaxPrice(null);
-    setOnlyNonstop(false);
-  }
+  function resetFilters() { setMaxPrice(null); setOnlyNonstop(false); }
+
+  const selectableAirports = airports.sort((a,b)=>a.city.localeCompare(b.city));
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
@@ -169,24 +133,32 @@ export default function Home() {
       <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, border: "1px solid #ddd", padding: 12, borderRadius: 8 }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
           <div>
+            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Tipo de viaje</label>
+            <select value={tripType} onChange={(e)=>setTripType(e.target.value as any)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }}>
+              <option value="roundtrip">Ida y vuelta</option>
+              <option value="oneway">Solo ida</option>
+            </select>
+          </div>
+
+          <div>
             <label style={{ display: "block", fontSize: 12, color: "#555" }}>Origen</label>
-            <input value="MAD" readOnly style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 90 }} />
+            <select value={origin} onChange={(e)=>setOrigin(e.target.value)} disabled={loadingAirports}
+              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, minWidth: 220 }}>
+              {selectableAirports.map(a => (
+                <option key={a.code} value={a.code}>{a.city} ({a.code}) — {a.name}</option>
+              ))}
+              {selectableAirports.length===0 && <option value="MAD">Madrid (MAD)</option>}
+            </select>
           </div>
 
           <div>
             <label style={{ display: "block", fontSize: 12, color: "#555" }}>Destino</label>
-            <select
-              value={destination}
-              onChange={(e) => setDestination(e.target.value)}
-              disabled={loadingAirports}
-              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, minWidth: 200 }}
-            >
-              {airports.map(a => (
-                <option key={a.code} value={a.code}>
-                  {a.city} ({a.code}) — {a.name}
-                </option>
+            <select value={destination} onChange={(e)=>setDestination(e.target.value)} disabled={loadingAirports}
+              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, minWidth: 220 }}>
+              {selectableAirports.map(a => (
+                <option key={a.code} value={a.code}>{a.city} ({a.code}) — {a.name}</option>
               ))}
-              {airports.length === 0 && <option value="BCN">Barcelona (BCN)</option>}
+              {selectableAirports.length===0 && <option value="BCN">Barcelona (BCN)</option>}
             </select>
           </div>
 
@@ -194,24 +166,19 @@ export default function Home() {
             <label style={{ display: "block", fontSize: 12, color: "#555" }}>Modo de fechas</label>
             <select value={mode} onChange={(e) => setMode(e.target.value as any)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }}>
               <option value="exact">Fechas exactas</option>
-              <option value="range">Rango (máx 25 combinaciones)</option>
+              <option value="range">Rango</option>
             </select>
           </div>
 
           <div>
             <label style={{ display: "block", fontSize: 12, color: "#555" }}>Adultos</label>
-            <input
-              type="number"
-              min={1}
-              value={adults}
-              onChange={(e) => setAdults(parseInt(e.target.value || "1", 10))}
-              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 80 }}
-            />
+            <input type="number" min={1} value={adults} onChange={(e)=>setAdults(parseInt(e.target.value||"1",10))}
+              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 80 }} />
           </div>
 
           <div style={{ alignSelf: "end" }}>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-              <input type="checkbox" checked={nonstop} onChange={(e) => setNonstop(e.target.checked)} />
+              <input type="checkbox" checked={nonstop} onChange={(e)=>setNonstop(e.target.checked)} />
               Solo sin escalas
             </label>
           </div>
@@ -221,35 +188,39 @@ export default function Home() {
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <div>
               <label style={{ display: "block", fontSize: 12, color: "#555" }}>Salida</label>
-              <input type="date" value={depDate} onChange={(e) => setDepDate(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+              <input type="date" value={depDate} onChange={(e)=>setDepDate(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
             </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso</label>
-              <input type="date" value={retDate} onChange={(e) => setRetDate(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
-            </div>
+            {tripType === "roundtrip" && (
+              <div>
+                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso</label>
+                <input type="date" value={retDate} onChange={(e)=>setRetDate(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+              </div>
+            )}
           </div>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <div>
                 <label style={{ display: "block", fontSize: 12, color: "#555" }}>Salida: inicio</label>
-                <input type="date" value={depStart} onChange={(e) => setDepStart(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+                <input type="date" value={depStart} onChange={(e)=>setDepStart(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
               </div>
               <div>
                 <label style={{ display: "block", fontSize: 12, color: "#555" }}>Salida: fin</label>
-                <input type="date" value={depEnd} onChange={(e) => setDepEnd(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+                <input type="date" value={depEnd} onChange={(e)=>setDepEnd(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
               </div>
             </div>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso: inicio</label>
-                <input type="date" value={retStart} onChange={(e) => setRetStart(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+            {tripType === "roundtrip" && (
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso: inicio</label>
+                  <input type="date" value={retStart} onChange={(e)=>setRetStart(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso: fin</label>
+                  <input type="date" value={retEnd} onChange={(e)=>setRetEnd(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
+                </div>
               </div>
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso: fin</label>
-                <input type="date" value={retEnd} onChange={(e) => setRetEnd(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
-              </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -260,7 +231,7 @@ export default function Home() {
           {res && (
             <>
               <span style={{ fontSize: 13, color: "#666" }}>
-                Resultado: {res.origin} → {res.destination} • {filteredOptions.length} opciones {res.cached ? "(caché)" : ""}
+                {res.origin} → {res.destination} • {filteredOptions.length} opciones {res.cached ? "(caché)" : ""}
               </span>
               <button type="button" onClick={resetFilters} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ccc", background: "#f4f4f4" }}>
                 Limpiar filtros
@@ -282,16 +253,11 @@ export default function Home() {
           <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
             <div>
               <label style={{ display: "block", fontSize: 12, color: "#555" }}>Precio máximo (€)</label>
-              <input
-                type="number"
-                min={0}
-                value={maxPrice ?? ""}
-                onChange={(e) => setMaxPrice(e.target.value ? parseInt(e.target.value, 10) : null)}
-                style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 140 }}
-              />
+              <input type="number" min={0} value={maxPrice ?? ""} onChange={(e)=>setMaxPrice(e.target.value ? parseInt(e.target.value,10) : null)}
+                style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 140 }} />
             </div>
             <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <input type="checkbox" checked={onlyNonstop} onChange={(e) => setOnlyNonstop(e.target.checked)} />
+              <input type="checkbox" checked={onlyNonstop} onChange={(e)=>setOnlyNonstop(e.target.checked)} />
               Solo sin escalas
             </label>
           </div>
@@ -326,9 +292,7 @@ export default function Home() {
                           <div>{fmtDT(o.inbound.departure)} → {fmtDT(o.inbound.arrival)}</div>
                           <div style={{ fontSize: 12, color: "#666" }}>{o.inbound.segments.join(" · ")}</div>
                         </>
-                      ) : (
-                        <em style={{ color: "#666" }}>—</em>
-                      )}
+                      ) : <em style={{ color: "#666" }}>—</em>}
                     </Td>
                   </tr>
                 ))}
@@ -342,16 +306,9 @@ export default function Home() {
 }
 
 function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th style={{ textAlign: "left", fontWeight: 600, fontSize: 13, padding: "10px 8px", borderBottom: "2px solid #ddd", whiteSpace: "nowrap" }}>
-      {children}
-    </th>
-  );
+  return <th style={{ textAlign: "left", fontWeight: 600, fontSize: 13, padding: "10px 8px", borderBottom: "2px solid #ddd", whiteSpace: "nowrap" }}>{children}</th>;
 }
 function Td({ children }: { children: React.ReactNode }) {
   return <td style={{ padding: "10px 8px", verticalAlign: "top" }}>{children}</td>;
 }
-
-async function safeJson(r: Response) {
-  try { return await r.json(); } catch { return null; }
-}
+async function safeJson(r: Response) { try { return await r.json(); } catch { return null; } }
