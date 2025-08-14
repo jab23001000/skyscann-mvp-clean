@@ -105,8 +105,13 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const options = normalizeOffers(results);
-  await redis.set(cacheKey, options, { ex: 60 * 60 * 12 });
-  return NextResponse.json({ origin, destination, options, cached: false });
+ const options = normalizeOffers(results);
+ try {
+   await redis.set(cacheKey, options, { ex: 60 * 60 * 12 });
+ } catch (e) {
+   console.error("cache_set_error", (e as Error).message);
+   // No rompemos la respuesta si falla la caché
+ }
+ return NextResponse.json({ origin, destination, options, cached: false });
 }
 
