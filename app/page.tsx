@@ -272,6 +272,7 @@ export default function Home() {
                   <Th>Duración total</Th>
                   <Th>Ida</Th>
                   <Th>Vuelta</Th>
+                  <Th>Reservar</Th>
                 </tr>
               </thead>
               <tbody>
@@ -293,6 +294,22 @@ export default function Home() {
                         </>
                       ) : <em style={{ color: "#666" }}>—</em>}
                     </Td>
+                    <Td>
+                      <a
+                        href={googleFlightsLink(
+                          (res?.origin ?? "MAD"),
+                          (res?.destination ?? "BCN"),
+                          o.outbound.departure,
+                          o.inbound?.departure ?? null,
+                          adults,
+                          o.currency
+                        )}
+                        target="_blank" rel="noopener noreferrer"
+                        style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #111", background: "#111", color: "#fff", textDecoration: "none", whiteSpace: "nowrap" }}
+                      >
+                        Abrir en Google Flights
+                      </a>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -302,6 +319,24 @@ export default function Home() {
       )}
     </main>
   );
+}
+function ymd(iso: string) {
+  return (iso || "").slice(0, 10); // "YYYY-MM-DD"
+}
+
+function googleFlightsLink(origin: string, dest: string, depISO: string, retISO: string | null, adults: number, currency = "EUR") {
+  // Usamos consulta natural: Google pre-rellena resultados de vuelo
+  const dep = ymd(depISO);
+  const ret = retISO ? ymd(retISO) : null;
+  const q = ret
+    ? `Vuelos de ${origin} a ${dest} ${dep} vuelta ${ret} ${adults} adultos`
+    : `Vuelos de ${origin} a ${dest} ${dep} ${adults} adultos`;
+  const params = new URLSearchParams({
+    q,
+    hl: "es",
+    curr: currency || "EUR",
+  });
+  return `https://www.google.com/travel/flights?${params.toString()}`;
 }
 
 function Th({ children }: { children: React.ReactNode }) {
