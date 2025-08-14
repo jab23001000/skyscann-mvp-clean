@@ -112,8 +112,7 @@ export default function Home() {
         throw new Error(j?.error || `Error ${r.status}`);
       }
       const j: SearchResponse = await r.json();
-      const min = Math.min(...(j.options?.map(o => o.price_total) ?? [0]));
-      setMaxPrice(Number.isFinite(min) ? Math.round(min * 1.2) : null);
+      setMaxPrice(null);
       setRes(j);
     } catch (e: any) {
       setErr(e?.message ?? "Error desconocido");
