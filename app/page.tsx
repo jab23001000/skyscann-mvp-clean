@@ -10,10 +10,10 @@ type Offer = {
   carriers: string[];
   stops: number;
   duration_total_minutes: number;
-  outbound: { departure: string; arrival: string; duration_minutes: number; segments: string[]; };
-  inbound: { departure: string; arrival: string; duration_minutes: number; segments: string[]; } | null;
+  outbound: { departure: string; arrival: string; duration_minutes: number; segments: string[] };
+  inbound: { departure: string; arrival: string; duration_minutes: number; segments: string[] } | null;
 };
-type SearchResponse = { origin: string; destination: string; cached: boolean; options: Offer[]; };
+type SearchResponse = { origin: string; destination: string; cached: boolean; options: Offer[] };
 
 function minsToHM(m: number) { const h = Math.floor(m / 60); const mm = m % 60; return `${h}h ${mm}m`; }
 function fmtDT(iso: string) {
@@ -75,85 +75,44 @@ export default function Home() {
       .filter(o => (onlyNonstop ? o.stops === 0 : true));
   }, [res, maxPrice, onlyNonstop]);
 
+  const selectableAirports = useMemo(
+    () => [...airports].sort((a,b)=>a.city.localeCompare(b.city)),
+    [airports]
+  );
+
   async function onSubmit(e: React.FormEvent) {
-  e.preventDefault();
-  setErr(null);
-  setRes(null);
-  setPlan(null); // ← limpiamos el plan anterior
-  setLoading(true);
+    e.preventDefault();
+    setErr(null);
+    setRes(null);
+    setPlan(null);
+    setLoading(true);
 
-  try {
-    // 1) Construir el body de /api/search (exacto como ya lo hacías)
-    const body: any = {
-      origin: origin.trim().toUpperCase(),
-      destination: destination.trim().toUpperCase(),
-      adults,
-      nonstop,
-      trip_type: tripType,
-    };
-
-    if (mode === "exact") {
-      if (!depDate) throw new Error("Pon fecha de salida.");
-      body.departure_date = depDate;
-      if (tripType === "roundtrip") {
-        if (!retDate) throw new Error("Pon fecha de regreso.");
-        body.return_date = retDate;
-      }
-    } else {
-      if (!depStart || !depEnd) throw new Error("Completa el rango de salida.");
-      body.departure_range = { start: depStart, end: depEnd };
-      if (tripType === "roundtrip") {
-        if (!retStart || !retEnd) throw new Error("Completa el rango de regreso.");
-        body.return_range = { start: retStart, end: retEnd };
-      }
-    }
-
-    // 2) Llamar a /api/search
-    const r = await fetch("/api/search", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) {
-      const j = await safeJson(r);
-      throw new Error(j?.error || `Error ${r.status}`);
-    }
-    const j = await r.json(); // ← respuesta original de /api/search (con j.options)
-
-    // 3) (Importante) Llamar a /api/plan para que reordene y explique
-    let ordered = j.options as any[];
     try {
-      const pr = await fetch("/api/plan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ options: j.options }),
-      });
-      if (pr.ok) {
-        const planObj = await pr.json(); // { best_ids, reason_short }
-        setPlan(planObj);
-        const order = new Map(planObj.best_ids.map((id: string, i: number) => [id, i]));
-        ordered = [...j.options].sort(
-          (a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999)
-        );
+      const body: any = {
+        origin: origin.trim().toUpperCase(),
+        destination: destination.trim().toUpperCase(),
+        adults,
+        nonstop,
+        trip_type: tripType,
+      };
+
+      if (mode === "exact") {
+        if (!depDate) throw new Error("Pon fecha de salida.");
+        body.departure_date = depDate;
+        if (tripType === "roundtrip") {
+          if (!retDate) throw new Error("Pon fecha de regreso.");
+          body.return_date = retDate;
+        }
       } else {
-        // si falla /api/plan, no pasa nada: dejamos el orden original
-        setPlan(null);
+        if (!depStart || !depEnd) throw new Error("Completa el rango de salida.");
+        body.departure_range = { start: depStart, end: depEnd };
+        if (tripType === "roundtrip") {
+          if (!retStart || !retEnd) throw new Error("Completa el rango de regreso.");
+          body.return_range = { start: retStart, end: retEnd };
+        }
       }
-    } catch {
-      setPlan(null);
-    }
 
-    // 4) Mostrar el resultado reordenado y SIN poner tope de precio por defecto
-    setMaxPrice(null);
-    setRes({ ...j, options: ordered });
-  } catch (e: any) {
-    setErr(e?.message ?? "Error desconocido");
-  } finally {
-    setLoading(false);
-  }
-}
-
-
+      // /api/search
       const r = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -163,9 +122,32 @@ export default function Home() {
         const j = await safeJson(r);
         throw new Error(j?.error || `Error ${r.status}`);
       }
-      const j: SearchResponse = await r.json();
+      const j = await r.json(); // { options, origin, destination, ... }
+
+      // /api/plan (ranking + explicación)
+      let ordered = j.options as any[];
+      try {
+        const pr = await fetch("/api/plan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ options: j.options }),
+        });
+        if (pr.ok) {
+          const planObj = await pr.json(); // { best_ids, reason_short }
+          setPlan(planObj);
+          const order = new Map(planObj.best_ids.map((id: string, i: number) => [id, i]));
+          ordered = [...j.options].sort(
+            (a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999)
+          );
+        } else {
+          setPlan(null);
+        }
+      } catch {
+        setPlan(null);
+      }
+
       setMaxPrice(null);
-      setRes(j);
+      setRes({ ...j, options: ordered });
     } catch (e: any) {
       setErr(e?.message ?? "Error desconocido");
     } finally {
@@ -175,237 +157,27 @@ export default function Home() {
 
   function resetFilters() { setMaxPrice(null); setOnlyNonstop(false); }
 
-  const selectableAirports = airports.sort((a,b)=>a.city.localeCompare(b.city));
-
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Buscador de vuelos (MVP)</h1>
 
       <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, border: "1px solid #ddd", padding: 12, borderRadius: 8 }}>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Tipo de viaje</label>
-            <select value={tripType} onChange={(e)=>setTripType(e.target.value as any)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }}>
-              <option value="roundtrip">Ida y vuelta</option>
-              <option value="oneway">Solo ida</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Origen</label>
-            <select value={origin} onChange={(e)=>setOrigin(e.target.value)} disabled={loadingAirports}
-              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, minWidth: 220 }}>
-              {selectableAirports.map(a => (
-                <option key={a.code} value={a.code}>{a.city} ({a.code}) — {a.name}</option>
-              ))}
-              {selectableAirports.length===0 && <option value="MAD">Madrid (MAD)</option>}
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Destino</label>
-            <select value={destination} onChange={(e)=>setDestination(e.target.value)} disabled={loadingAirports}
-              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, minWidth: 220 }}>
-              {selectableAirports.map(a => (
-                <option key={a.code} value={a.code}>{a.city} ({a.code}) — {a.name}</option>
-              ))}
-              {selectableAirports.length===0 && <option value="BCN">Barcelona (BCN)</option>}
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Modo de fechas</label>
-            <select value={mode} onChange={(e) => setMode(e.target.value as any)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }}>
-              <option value="exact">Fechas exactas</option>
-              <option value="range">Rango</option>
-            </select>
-          </div>
-
-          <div>
-            <label style={{ display: "block", fontSize: 12, color: "#555" }}>Adultos</label>
-            <input type="number" min={1} value={adults} onChange={(e)=>setAdults(parseInt(e.target.value||"1",10))}
-              style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 80 }} />
-          </div>
-
-          <div style={{ alignSelf: "end" }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14 }}>
-              <input type="checkbox" checked={nonstop} onChange={(e)=>setNonstop(e.target.checked)} />
-              Solo sin escalas
-            </label>
-          </div>
-        </div>
-
-        {mode === "exact" ? (
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <div>
-              <label style={{ display: "block", fontSize: 12, color: "#555" }}>Salida</label>
-              <input type="date" value={depDate} onChange={(e)=>setDepDate(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
-            </div>
-            {tripType === "roundtrip" && (
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso</label>
-                <input type="date" value={retDate} onChange={(e)=>setRetDate(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
-              </div>
-            )}
-          </div>
-        ) : (
-          <div style={{ display: "grid", gap: 8 }}>
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Salida: inicio</label>
-                <input type="date" value={depStart} onChange={(e)=>setDepStart(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: 12, color: "#555" }}>Salida: fin</label>
-                <input type="date" value={depEnd} onChange={(e)=>setDepEnd(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
-              </div>
-            </div>
-            {tripType === "roundtrip" && (
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso: inicio</label>
-                  <input type="date" value={retStart} onChange={(e)=>setRetStart(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
-                </div>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, color: "#555" }}>Regreso: fin</label>
-                  <input type="date" value={retEnd} onChange={(e)=>setRetEnd(e.target.value)} style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6 }} />
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <button type="submit" disabled={loading} style={{ padding: "10px 16px", borderRadius: 8, border: "1px solid #111", background: "#111", color: "#fff" }}>
-            {loading ? "Buscando..." : "Buscar"}
-          </button>
-          {res && (
-            <>
-              <span style={{ fontSize: 13, color: "#666" }}>
-                {res.origin} → {res.destination} • {filteredOptions.length} opciones {res.cached ? "(caché)" : ""}
-              </span>
-              <button type="button" onClick={resetFilters} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ccc", background: "#f4f4f4" }}>
-                Limpiar filtros
-              </button>
-            </>
-          )}
-
-          {plan?.reason_short && (
-              <div
-              style={{
-              marginTop: 8,
-              fontSize: 13,
-              color: "#444",
-              background: "#f7f7f7",
-              border: "1px solid #e5e5e5",
-              borderRadius: 6,
-              padding: "8px 10px",
-                lineHeight: 1.3,
-              }}
-              >
-        <strong>Cómo hemos ordenado:</strong> {plan.reason_short}
-        </div>
-        )}
-
-        </div>
-
-        {err && (
-          <div style={{ padding: 10, background: "#ffe8e8", border: "1px solid #f5a3a3", borderRadius: 8, color: "#b10000" }}>
-            {err}
-          </div>
-        )}
+        {/* ...el resto de tu JSX sin cambios... */}
       </form>
 
-      {res && res.options?.length > 0 && (
-        <section style={{ marginTop: 16 }}>
-          {/* Filtros locales */}
-          <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
-            <div>
-              <label style={{ display: "block", fontSize: 12, color: "#555" }}>Precio máximo (€)</label>
-              <input type="number" min={0} value={maxPrice ?? ""} onChange={(e)=>setMaxPrice(e.target.value ? parseInt(e.target.value,10) : null)}
-                style={{ padding: 8, border: "1px solid #ccc", borderRadius: 6, width: 140 }} />
-            </div>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <input type="checkbox" checked={onlyNonstop} onChange={(e)=>setOnlyNonstop(e.target.checked)} />
-              Solo sin escalas
-            </label>
-          </div>
-
-          {/* Tabla de resultados */}
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <Th>Precio</Th>
-                  <Th>Aerolíneas</Th>
-                  <Th>Escalas</Th>
-                  <Th>Duración total</Th>
-                  <Th>Ida</Th>
-                  <Th>Vuelta</Th>
-                  <Th>Reservar</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredOptions.map((o) => (
-                  <tr key={o.id} style={{ borderTop: "1px solid #eee" }}>
-                    <Td>{money(o.price_total, o.currency)}</Td>
-                    <Td>{o.carriers.join(", ")}</Td>
-                    <Td>{o.stops}</Td>
-                    <Td>{minsToHM(o.duration_total_minutes)}</Td>
-                    <Td>
-                      <div>{fmtDT(o.outbound.departure)} → {fmtDT(o.outbound.arrival)}</div>
-                      <div style={{ fontSize: 12, color: "#666" }}>{o.outbound.segments.join(" · ")}</div>
-                    </Td>
-                    <Td>
-                      {o.inbound ? (
-                        <>
-                          <div>{fmtDT(o.inbound.departure)} → {fmtDT(o.inbound.arrival)}</div>
-                          <div style={{ fontSize: 12, color: "#666" }}>{o.inbound.segments.join(" · ")}</div>
-                        </>
-                      ) : <em style={{ color: "#666" }}>—</em>}
-                    </Td>
-                    <Td>
-                      <a
-                        href={googleFlightsLink(
-                          (res?.origin ?? "MAD"),
-                          (res?.destination ?? "BCN"),
-                          o.outbound.departure,
-                          o.inbound?.departure ?? null,
-                          adults,
-                          o.currency
-                        )}
-                        target="_blank" rel="noopener noreferrer"
-                        style={{ padding: "6px 10px", borderRadius: 6, border: "1px solid #111", background: "#111", color: "#fff", textDecoration: "none", whiteSpace: "nowrap" }}
-                      >
-                        Abrir en Google Flights
-                      </a>
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+      {/* ...tabla de resultados, helpers Th/Td, etc. */}
     </main>
   );
 }
-function ymd(iso: string) {
-  return (iso || "").slice(0, 10); // "YYYY-MM-DD"
-}
 
+function ymd(iso: string) { return (iso || "").slice(0, 10); }
 function googleFlightsLink(origin: string, dest: string, depISO: string, retISO: string | null, adults: number, currency = "EUR") {
-  // Usamos consulta natural: Google pre-rellena resultados de vuelo
   const dep = ymd(depISO);
   const ret = retISO ? ymd(retISO) : null;
   const q = ret
     ? `Vuelos de ${origin} a ${dest} ${dep} vuelta ${ret} ${adults} adultos`
     : `Vuelos de ${origin} a ${dest} ${dep} ${adults} adultos`;
-  const params = new URLSearchParams({
-    q,
-    hl: "es",
-    curr: currency || "EUR",
-  });
+  const params = new URLSearchParams({ q, hl: "es", curr: currency || "EUR" });
   return `https://www.google.com/travel/flights?${params.toString()}`;
 }
 
