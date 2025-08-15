@@ -289,6 +289,24 @@ export default function Home() {
               </button>
             </>
           )}
+
+          {plan?.reason_short && (
+              <div
+              style={{
+              marginTop: 8,
+              fontSize: 13,
+              color: "#444",
+              background: "#f7f7f7",
+              border: "1px solid #e5e5e5",
+              borderRadius: 6,
+              padding: "8px 10px",
+                lineHeight: 1.3,
+              }}
+              >
+        <strong>Cómo hemos ordenado:</strong> {plan.reason_short}
+        </div>
+        )}
+
         </div>
 
         {err && (
