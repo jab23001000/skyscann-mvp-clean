@@ -14,14 +14,14 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-  "@types/node": "^20.14.2",
-  "@types/react": "^18.2.66",
-  "@types/react-dom": "^18.2.22",
-  "typescript": "^5.5.0",
-  "postcss": "^8.4.41",
-  "@tailwindcss/postcss": "^8.0.0",
-  "tailwindcss": "^4.0.0"
-},
+    "@types/node": "^20.14.2",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "typescript": "^5.5.0",
+    "postcss": "^8.4.41",
+    "@tailwindcss/postcss": "^4.1.12",
+    "tailwindcss": "^4.1.12"
+  },
   "engines": {
     "node": ">=18.18 <23"
   }
