@@ -35,6 +35,7 @@ export default function Home() {
   const [tripType, setTripType] = useState<"oneway" | "roundtrip">("roundtrip");
   const [mode, setMode] = useState<"exact" | "range">("exact");
   const [origin, setOrigin] = useState("MAD");
+  const [plan, setPlan] = useState<{ best_ids: string[]; reason_short?: string } | null>(null);
   const [destination, setDestination] = useState("BCN");
   const [depDate, setDepDate] = useState("");
   const [retDate, setRetDate] = useState("");
