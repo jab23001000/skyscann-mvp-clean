@@ -80,106 +80,93 @@ export default function Home() {
     [airports]
   );
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null);
-    setRes(null);
-    setPlan(null);
-    setLoading(true);
+async function onSubmit(e: React.FormEvent) {
+  e.preventDefault();
+  setErr(null);
+  setRes(null);
+  setPlan(null);
+  setLoading(true);
 
-    try {
-      const body: any = {
-        origin: origin.trim().toUpperCase(),
-        destination: destination.trim().toUpperCase(),
-        adults,
-        nonstop,
-        trip_type: tripType,
-      };
+  try {
+    // Construir el body según modo/fechas
+    const body: any = {
+      origin: origin.trim().toUpperCase(),
+      destination: destination.trim().toUpperCase(),
+      adults,
+      nonstop,
+      trip_type: tripType,
+    };
 
-      if (mode === "exact") {
-        if (!depDate) throw new Error("Pon fecha de salida.");
-        body.departure_date = depDate;
-        if (tripType === "roundtrip") {
-          if (!retDate) throw new Error("Pon fecha de regreso.");
-          body.return_date = retDate;
-        }
-      } else {
-        if (!depStart || !depEnd) throw new Error("Completa el rango de salida.");
-        body.departure_range = { start: depStart, end: depEnd };
-        if (tripType === "roundtrip") {
-          if (!retStart || !retEnd) throw new Error("Completa el rango de regreso.");
-          body.return_range = { start: retStart, end: retEnd };
-        }
+    if (mode === "exact") {
+      if (!depDate) throw new Error("Pon fecha de salida.");
+      body.departure_date = depDate;
+      if (tripType === "roundtrip") {
+        if (!retDate) throw new Error("Pon fecha de regreso.");
+        body.return_date = retDate;
       }
+    } else {
+      if (!depStart || !depEnd) throw new Error("Completa el rango de salida.");
+      body.departure_range = { start: depStart, end: depEnd };
+      if (tripType === "roundtrip") {
+        if (!retStart || !retEnd) throw new Error("Completa el rango de regreso.");
+        body.return_range = { start: retStart, end: retEnd };
+      }
+    }
 
-      // /api/search
-      const r = await fetch("/api/search", {
+    // 1) /api/search
+    const r = await fetch("/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const j = await safeJson(r);
+      throw new Error(j?.error || `Error ${r.status}`);
+    }
+    const j = await r.json(); // { options, origin, destination, ... }
+
+    // 2) /api/plan (ranking + explicación)
+    let ordered = j.options as any[];
+    try {
+      const pr = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ options: j.options }),
       });
-      if (!r.ok) {
-        const j = await safeJson(r);
-        throw new Error(j?.error || `Error ${r.status}`);
-      }
-      const j = await r.json(); // { options, origin, destination, ... }
 
-      // /api/plan (ranking + explicación)
-      let ordered = j.options as any[];
-      try {
-        const pr = await fetch("/api/plan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ options: j.options }),
-        });
-        if (pr.ok) {
-  const planObj = await pr.json(); // { best_ids, reason_short }
-  setPlan(planObj);
+      if (pr.ok) {
+        const planObj = await pr.json(); // { best_ids, reason_short }
+        setPlan(planObj);
 
-  const order: Map<string, number> = new Map<string, number>(
-    (planObj.best_ids as string[]).map((id, i) => [id, i])
-  );
+        const order: Map<string, number> = new Map<string, number>(
+          (planObj.best_ids as string[]).map((id, i) => [id, i])
+        );
 
-  const rank = (id: string): number => {
-    const v = order.get(id);
-    return typeof v === "number" ? v : 999;
-  };
+        const rank = (id: string): number => {
+          const v = order.get(id);
+          return typeof v === "number" ? v : 999;
+        };
 
-  ordered = [...j.options].sort(
-    (a: any, b: any) => rank(a.id) - rank(b.id)
-  );
-}
-
-        } else {
-          setPlan(null);
-        }
-      } catch {
+        ordered = [...j.options].sort(
+          (a: any, b: any) => rank(a.id) - rank(b.id)
+        );
+      } else {
         setPlan(null);
       }
-
-      setMaxPrice(null);
-      setRes({ ...j, options: ordered });
-    } catch (e: any) {
-      setErr(e?.message ?? "Error desconocido");
-    } finally {
-      setLoading(false);
+    } catch {
+      setPlan(null);
     }
+
+    // 3) Guardar resultado
+    setMaxPrice(null);
+    setRes({ ...j, options: ordered });
+  } catch (e: any) {
+    setErr(e?.message ?? "Error desconocido");
+  } finally {
+    setLoading(false);
   }
-
-  function resetFilters() { setMaxPrice(null); setOnlyNonstop(false); }
-
-  return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 16 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>Buscador de vuelos (MVP)</h1>
-
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 12, border: "1px solid #ddd", padding: 12, borderRadius: 8 }}>
-        {/* ...el resto de tu JSX sin cambios... */}
-      </form>
-
-      {/* ...tabla de resultados, helpers Th/Td, etc. */}
-    </main>
-  );
 }
+
 
 function ymd(iso: string) { return (iso || "").slice(0, 10); }
 function googleFlightsLink(origin: string, dest: string, depISO: string, retISO: string | null, adults: number, currency = "EUR") {
