@@ -133,12 +133,23 @@ export default function Home() {
           body: JSON.stringify({ options: j.options }),
         });
         if (pr.ok) {
-          const planObj = await pr.json(); // { best_ids, reason_short }
-          setPlan(planObj);
-          const order = new Map(planObj.best_ids.map((id: string, i: number) => [id, i]));
-          ordered = [...j.options].sort(
-            (a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999)
-          );
+  const planObj = await pr.json(); // { best_ids, reason_short }
+  setPlan(planObj);
+
+  const order: Map<string, number> = new Map<string, number>(
+    (planObj.best_ids as string[]).map((id, i) => [id, i])
+  );
+
+  const rank = (id: string): number => {
+    const v = order.get(id);
+    return typeof v === "number" ? v : 999;
+  };
+
+  ordered = [...j.options].sort(
+    (a: any, b: any) => rank(a.id) - rank(b.id)
+  );
+}
+
         } else {
           setPlan(null);
         }
