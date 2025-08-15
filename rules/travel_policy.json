@@ -1,0 +1,30 @@
+{
+  "scope": "España doméstico",
+  "objectives": {
+    "weights": {
+      "price": 0.4,
+      "duration": 0.35,
+      "transfers": 0.15,
+      "connection_risk": 0.1
+    }
+  },
+  "defaults": {
+    "allow_overnight": false,
+    "max_transfers_total": 2,
+    "min_connection_minutes": {
+      "airport_airport": 60,
+      "airport_station_same_city": 90,
+      "station_station": 20
+    },
+    "prefer_modes": ["train", "flight", "bus", "coche"]
+  },
+  "constraints": {
+    "disallow_city_change_without_time_buffer": true,
+    "last_departure_local_time": "22:30"
+  },
+  "notes": [
+    "Si precio similar (±10%) y tren < 3h, preferir tren a vuelo.",
+    "Evitar combinaciones con traslados nocturnos en ciudades no principales.",
+    "con coche, considerar restricciones de etiqueta medioambiental, precios de parking y coste gasolina"
+  ]
+}
