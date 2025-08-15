@@ -76,32 +76,83 @@ export default function Home() {
   }, [res, maxPrice, onlyNonstop]);
 
   async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null); setRes(null); setLoading(true);
-    try {
-      const body: any = {
-        origin: origin.trim().toUpperCase(),
-        destination: destination.trim().toUpperCase(),
-        adults,
-        nonstop,
-        trip_type: tripType,
-      };
+  e.preventDefault();
+  setErr(null);
+  setRes(null);
+  setPlan(null); // ← limpiamos el plan anterior
+  setLoading(true);
 
-      if (mode === "exact") {
-        if (!depDate) throw new Error("Pon fecha de salida.");
-        body.departure_date = depDate;
-        if (tripType === "roundtrip") {
-          if (!retDate) throw new Error("Pon fecha de regreso.");
-          body.return_date = retDate;
-        }
-      } else {
-        if (!depStart || !depEnd) throw new Error("Completa el rango de salida.");
-        body.departure_range = { start: depStart, end: depEnd };
-        if (tripType === "roundtrip") {
-          if (!retStart || !retEnd) throw new Error("Completa el rango de regreso.");
-          body.return_range = { start: retStart, end: retEnd };
-        }
+  try {
+    // 1) Construir el body de /api/search (exacto como ya lo hacías)
+    const body: any = {
+      origin: origin.trim().toUpperCase(),
+      destination: destination.trim().toUpperCase(),
+      adults,
+      nonstop,
+      trip_type: tripType,
+    };
+
+    if (mode === "exact") {
+      if (!depDate) throw new Error("Pon fecha de salida.");
+      body.departure_date = depDate;
+      if (tripType === "roundtrip") {
+        if (!retDate) throw new Error("Pon fecha de regreso.");
+        body.return_date = retDate;
       }
+    } else {
+      if (!depStart || !depEnd) throw new Error("Completa el rango de salida.");
+      body.departure_range = { start: depStart, end: depEnd };
+      if (tripType === "roundtrip") {
+        if (!retStart || !retEnd) throw new Error("Completa el rango de regreso.");
+        body.return_range = { start: retStart, end: retEnd };
+      }
+    }
+
+    // 2) Llamar a /api/search
+    const r = await fetch("/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const j = await safeJson(r);
+      throw new Error(j?.error || `Error ${r.status}`);
+    }
+    const j = await r.json(); // ← respuesta original de /api/search (con j.options)
+
+    // 3) (Importante) Llamar a /api/plan para que reordene y explique
+    let ordered = j.options as any[];
+    try {
+      const pr = await fetch("/api/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ options: j.options }),
+      });
+      if (pr.ok) {
+        const planObj = await pr.json(); // { best_ids, reason_short }
+        setPlan(planObj);
+        const order = new Map(planObj.best_ids.map((id: string, i: number) => [id, i]));
+        ordered = [...j.options].sort(
+          (a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999)
+        );
+      } else {
+        // si falla /api/plan, no pasa nada: dejamos el orden original
+        setPlan(null);
+      }
+    } catch {
+      setPlan(null);
+    }
+
+    // 4) Mostrar el resultado reordenado y SIN poner tope de precio por defecto
+    setMaxPrice(null);
+    setRes({ ...j, options: ordered });
+  } catch (e: any) {
+    setErr(e?.message ?? "Error desconocido");
+  } finally {
+    setLoading(false);
+  }
+}
+
 
       const r = await fetch("/api/search", {
         method: "POST",
