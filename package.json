@@ -22,14 +22,14 @@
     "@tailwindcss/postcss": "^4.1.12",
     "tailwindcss": "^4.1.12"
   },
-  "engines": {
-    "node": ">=18.18 <23"
-  },
-  // package.json
-{
   "overrides": {
     "react": "18.2.0",
     "react-dom": "18.2.0"
+  },
+  
+  "engines": {
+    "node": ">=18.18 <23"
+
   }
 }
 
