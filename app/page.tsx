@@ -105,6 +105,30 @@ async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
   setPlan(null);
   setLoading(true);
 
+  if (mode === "exact") {
+  if (!depDate) {
+    setLoading(false);
+    setErr("Selecciona una fecha de salida.");
+    return;
+  }
+  if (tripType === "roundtrip" && !retDate) {
+    setLoading(false);
+    setErr("Selecciona una fecha de regreso.");
+    return;
+  }
+} else {
+  if (!depStart || !depEnd) {
+    setLoading(false);
+    setErr("Completa el rango de salida (inicio y fin).");
+    return;
+  }
+  if (tripType === "roundtrip" && (!retStart || !retEnd)) {
+    setLoading(false);
+    setErr("Completa el rango de regreso (inicio y fin).");
+    return;
+  }
+}
+
   try {
     const payload = {
       origin: origin.trim().toUpperCase(),
