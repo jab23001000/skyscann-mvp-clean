@@ -125,57 +125,7 @@ async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
       adults,
     };
 
-    // 1) /api/search
-    const r = await fetch("/api/search", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    const j = await r.json();
-    if (!r.ok) {
-      console.error("search error", j);
-      throw new Error(j?.error || `Error ${r.status}`);
-    }
-
-    // 2) /api/plan (ranking + explicación)
-    let ordered = j.options as any[];
-    try {
-      const pr = await fetch("/api/plan", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ options: j.options }),
-      });
-
-      if (pr.ok) {
-        const planObj = await pr.json(); // { best_ids, reason_short }
-        setPlan(planObj);
-
-        const order = new Map<string, number>(
-          (planObj.best_ids as string[]).map((id, i) => [id, i])
-        );
-        const rank = (id: string) => {
-          const v = order.get(id);
-          return typeof v === "number" ? v : 999;
-        };
-        ordered = [...j.options].sort((a: any, b: any) => rank(a.id) - rank(b.id));
-      } else {
-        setPlan(null);
-      }
-    } catch {
-      setPlan(null);
-    }
-
-    // 3) Guardar resultado
-    setMaxPrice(null);
-    setRes({ ...j, options: ordered });
-  } catch (e: any) {
-    setErr(e?.message ?? "Error desconocido");
-  } finally {
-    setLoading(false);
-  }
-}
-
+    
       // 1) /api/search
       const r = await fetch("/api/search", {
         method: "POST",
