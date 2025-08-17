@@ -517,26 +517,36 @@ async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
   );
 }
 
-function ymd(iso: string) {
-  return (iso || "").slice(0, 10); // "YYYY-MM-DD"
+function ymd(iso?: string | null) {
+  if (!iso || typeof iso !== "string") return "";
+  // si ya viene "YYYY-MM-DD", úsalo; si es ISO, corta 10
+  return iso.length >= 10 ? iso.slice(0, 10) : iso;
 }
 
 function googleFlightsLink(
   origin: string,
   dest: string,
-  depISO: string,
-  retISO: string | null,
-  adults: number,
+  depISO?: string | null,
+  retISO?: string | null,
+  adults: number = 1,
   currency = "EUR"
 ) {
-  const dep = ymd(depISO);
-  const ret = retISO ? ymd(retISO) : null;
-  const q = ret
-    ? `Vuelos de ${origin} a ${dest} ${dep} vuelta ${ret} ${adults} adultos`
-    : `Vuelos de ${origin} a ${dest} ${dep} ${adults} adultos`;
+  const dep = depISO ? ymd(depISO) : "";
+  const ret = retISO ? ymd(retISO) : "";
+  const hasDep = !!dep;
+  const hasRet = !!ret;
+
+  // Construye query sin fechas si no las tenemos (evita crash)
+  const q = hasDep
+    ? (hasRet
+        ? `Vuelos de ${origin} a ${dest} ${dep} vuelta ${ret} ${adults} adultos`
+        : `Vuelos de ${origin} a ${dest} ${dep} ${adults} adultos`)
+    : `Vuelos de ${origin} a ${dest} ${adults} adultos`;
+
   const params = new URLSearchParams({ q, hl: "es", curr: currency || "EUR" });
   return `https://www.google.com/travel/flights?${params.toString()}`;
 }
+
 
 function Th({ children }: { children: React.ReactNode }) {
   return (
