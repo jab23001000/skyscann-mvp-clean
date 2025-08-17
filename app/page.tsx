@@ -124,6 +124,7 @@ async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
       adults,
     };
 
+    // 1) /api/search
     const r = await fetch("/api/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -136,7 +137,7 @@ async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
       throw new Error(j?.error || `Error ${r.status}`);
     }
 
-    // Ranking / explicación
+    // 2) /api/plan (ranking + explicación)
     let ordered = j.options as any[];
     try {
       const pr = await fetch("/api/plan", {
@@ -164,6 +165,7 @@ async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
       setPlan(null);
     }
 
+    // 3) Guardar resultado
     setMaxPrice(null);
     setRes({ ...j, options: ordered });
   } catch (e: any) {
@@ -172,59 +174,7 @@ async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     setLoading(false);
   }
 }
-    
-      // 1) /api/search
-      const r = await fetch("/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!r.ok) {
-        const j = await safeJson(r);
-        throw new Error(j?.error || `Error ${r.status}`);
-      }
-      const j = await r.json(); // { options, origin, destination, ... }
 
-      // 2) /api/plan (ranking + explicación)
-      let ordered = j.options as any[];
-      try {
-        const pr = await fetch("/api/plan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ options: j.options }),
-        });
-
-        if (pr.ok) {
-          const planObj = await pr.json(); // { best_ids, reason_short }
-          setPlan(planObj);
-
-          const order: Map<string, number> = new Map<string, number>(
-            (planObj.best_ids as string[]).map((id, i) => [id, i])
-          );
-
-          const rank = (id: string): number => {
-            const v = order.get(id);
-            return typeof v === "number" ? v : 999;
-            // Alternativa: return (order.get(id) ?? 999) as number;
-          };
-
-          ordered = [...j.options].sort((a: any, b: any) => rank(a.id) - rank(b.id));
-        } else {
-          setPlan(null);
-        }
-      } catch {
-        setPlan(null);
-      }
-
-      // 3) Guardar resultado
-      setMaxPrice(null);
-      setRes({ ...j, options: ordered });
-    } catch (e: any) {
-      setErr(e?.message ?? "Error desconocido");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   function resetFilters() {
     setMaxPrice(null);
