@@ -1,52 +1,123 @@
-type AmadeusOffer = any;
+// lib/normalize.ts
+// Normalizador robusto Amadeus -> Offer del proyecto
+// Garantiza que las fechas SIEMPRE son strings ("" si faltan) para evitar .slice en undefined.
+// Garantiza segments como string[] y números seguros.
 
-function isoDurToMinutes(iso: string) {
-  const h = /(\d+)H/.exec(iso)?.[1];
-  const m = /(\d+)M/.exec(iso)?.[1];
-  return (h ? parseInt(h) : 0) * 60 + (m ? parseInt(m) : 0);
+import type { Offer } from "@/types/itinerary";
+
+// Helpers seguros
+const asStr = (v: any): string => (typeof v === "string" ? v : "");
+const asNum = (v: any): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const isoOrEmpty = (v: any): string => (typeof v === "string" && v.length >= 10 ? v : "");
+
+// ISO8601 PTxHxM → minutos
+export function isoDurationToMinutes(iso?: string): number {
+  if (!iso || typeof iso !== "string") return 0;
+  // Formatos tipo "PT1H35M", "PT45M", "PT2H"
+  const h = iso.match(/(\d+)H/);
+  const m = iso.match(/(\d+)M/);
+  const hours = h ? parseInt(h[1], 10) : 0;
+  const mins = m ? parseInt(m[1], 10) : 0;
+  return hours * 60 + mins;
 }
 
-export function normalizeOffers(offers: AmadeusOffer[]) {
-  const out: any[] = [];
-  const seen = new Set<string>();
-  for (const o of offers ?? []) {
-    try {
-      const id = o.id;
-      if (seen.has(id)) continue;
-      seen.add(id);
+type AmadeusOffer = {
+  id: string;
+  price?: { grandTotal?: string; currency?: string };
+  itineraries?: Array<{
+    duration?: string;
+    segments?: Array<{
+      carrierCode?: string;
+      number?: string;
+      departure?: { iataCode?: string; at?: string };
+      arrival?: { iataCode?: string; at?: string };
+      duration?: string;
+    }>;
+  }>;
+};
 
-      const itineraries = o.itineraries || [];
-      const outIt = itineraries[0], inIt = itineraries[1];
+export function normalizeAmadeus(data: any): Offer[] {
+  const items: AmadeusOffer[] = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
+  const res: Offer[] = items.map((o) => {
+    const its = Array.isArray(o.itineraries) ? o.itineraries : [];
 
-      const carriers = Array.from(new Set([...(outIt?.segments ?? []), ...(inIt?.segments ?? [])]
-        .map((s: any) => s.carrierCode)));
+    // OUTBOUND (itineraries[0])
+    const it0 = its[0] || {};
+    const seg0 = Array.isArray(it0.segments) ? it0.segments : [];
+    const outDep = isoOrEmpty(seg0[0]?.departure?.at);
+    const outArr = isoOrEmpty(seg0[seg0.length - 1]?.arrival?.at);
+    const outDur = isoDurationToMinutes(it0.duration);
+    const outSegs: string[] = seg0.map((s) => {
+      const c = asStr(s?.carrierCode);
+      const n = asStr(s?.number);
+      const from = asStr(s?.departure?.iataCode);
+      const to = asStr(s?.arrival?.iataCode);
+      return [c && n ? `${c}${n}` : "", from && to ? `${from}-${to}` : ""].filter(Boolean).join(" ");
+    });
 
-      const buildSlice = (it: any) => {
-        const segs = it.segments;
-        return {
-          departure: segs[0].departure.at,
-          arrival: segs[segs.length - 1].arrival.at,
-          duration_minutes: isoDurToMinutes(it.duration),
-          segments: segs.map((s: any) => `${s.carrierCode}${s.number} ${s.departure.iataCode}-${s.arrival.iataCode}`),
-        };
-      };
+    // INBOUND (itineraries[1]) — puede no existir
+    const it1 = its[1] || null;
+    const seg1 = it1 && Array.isArray(it1.segments) ? it1.segments : [];
+    const inDep = it1 ? isoOrEmpty(seg1[0]?.departure?.at) : "";
+    const inArr = it1 ? isoOrEmpty(seg1[seg1.length - 1]?.arrival?.at) : "";
+    const inDur = it1 ? isoDurationToMinutes(it1.duration) : 0;
+    const inSegs: string[] = it1 ? seg1.map((s) => {
+      const c = asStr(s?.carrierCode);
+      const n = asStr(s?.number);
+      const from = asStr(s?.departure?.iataCode);
+      const to = asStr(s?.arrival?.iataCode);
+      return [c && n ? `${c}${n}` : "", from && to ? `${from}-${to}` : ""].filter(Boolean).join(" ");
+    }) : [];
 
-      const outbound = buildSlice(outIt);
-      const inbound  = inIt ? buildSlice(inIt) : null;
-      const stops = Math.max(0, (outIt?.segments?.length ?? 1) - 1) + (inIt ? Math.max(0, inIt.segments.length - 1) : 0);
-      const total_minutes = outbound.duration_minutes + (inbound?.duration_minutes ?? 0);
+    // Carriers y stops (total)
+    const allSegs = [...seg0, ...seg1];
+    const carriers = Array.from(
+      new Set(
+        allSegs
+          .map((s) => asStr(s?.carrierCode))
+          .filter(Boolean)
+      )
+    );
+    // Parada = conexiones: segmentos - 1 por sentido; suma ambos sentidos
+    const stopsOut = Math.max(0, seg0.length - 1);
+    const stopsIn = it1 ? Math.max(0, seg1.length - 1) : 0;
+    const totalStops = stopsOut + stopsIn;
 
-      out.push({
-        id,
-        price_total: parseFloat(o.price.grandTotal),
-        currency: o.price.currency,
-        carriers,
-        stops,
-        duration_total_minutes: total_minutes,
-        outbound,
-        inbound,
-      });
-    } catch {}
-  }
-  return out;
+    // Duración total
+    const duration_total_minutes = outDur + inDur;
+
+    // Precio y moneda
+    const price_total = asNum(o?.price?.grandTotal);
+    const currency = asStr(o?.price?.currency) || "EUR";
+
+    const offer: Offer = {
+      id: asStr(o?.id) || crypto.randomUUID(),
+      price_total,
+      currency,
+      carriers,
+      stops: totalStops,
+      duration_total_minutes,
+      outbound: {
+        departure: outDep,         // "" si falta → NO revienta .slice
+        arrival: outArr,           // ""
+        duration_minutes: outDur,
+        segments: outSegs,         // [] si falta
+      },
+      inbound: it1
+        ? {
+            departure: inDep,      // "" si falta
+            arrival: inArr,        // ""
+            duration_minutes: inDur,
+            segments: inSegs,      // []
+          }
+        : null,
+    };
+
+    return offer;
+  });
+
+  return res;
 }
