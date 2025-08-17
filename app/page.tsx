@@ -98,39 +98,43 @@ export default function Home() {
     [airports]
   );
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setErr(null);
-    setRes(null);
-    setPlan(null);
-    setLoading(true);
+async function onSubmit(e: React.FormEvent) {
+  e.preventDefault();
+  setErr(null);
+  setRes(null);
+  setPlan(null);
+  setLoading(true);
 
-    try {
-      // Construir el body según modo/fechas
-      const body: any = {
-        origin: origin.trim().toUpperCase(),
-        destination: destination.trim().toUpperCase(),
-        adults,
-        nonstop,
-        trip_type: tripType,
-      };
+  try {
+    const payload = {
+      origin: origin.trim().toUpperCase(),
+      destination: destination.trim().toUpperCase(),
+      trip_type: tripType,
+      departure_date: depDate,
+      return_date: tripType === "roundtrip" ? retDate || null : null,
+      nonstop,
+      adults,
+    };
 
-      if (mode === "exact") {
-        if (!depDate) throw new Error("Pon fecha de salida.");
-        body.departure_date = depDate;
-        if (tripType === "roundtrip") {
-          if (!retDate) throw new Error("Pon fecha de regreso.");
-          body.return_date = retDate;
-        }
-      } else {
-        if (!depStart || !depEnd) throw new Error("Completa el rango de salida.");
-        body.departure_range = { start: depStart, end: depEnd };
-        if (tripType === "roundtrip") {
-          if (!retStart || !retEnd) throw new Error("Completa el rango de regreso.");
-          body.return_range = { start: retStart, end: retEnd };
-        }
-      }
+    const res = await fetch("/api/search", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
+    const data = await res.json();
+    if (!res.ok) {
+      console.error("search error", data);
+      setErr(data?.error ?? "Search failed");
+    } else {
+      setRes(data);
+    }
+  } catch (e: any) {
+    setErr(e?.message ?? "Error desconocido");
+  } finally {
+    setLoading(false);
+  }
+}
       // 1) /api/search
       const r = await fetch("/api/search", {
         method: "POST",
