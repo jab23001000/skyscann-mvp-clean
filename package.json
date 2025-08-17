@@ -24,6 +24,13 @@
   },
   "engines": {
     "node": ">=18.18 <23"
+  },
+  // package.json
+{
+  "overrides": {
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
   }
 }
+
 
