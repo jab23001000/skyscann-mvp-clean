@@ -122,6 +122,10 @@ async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
           : undefined,
       nonstop,
       adults,
+
+      // ⬇️ Alias para /api/search legacy
+      date: mode === "exact" ? depDate : undefined,
+      date_range: mode === "range" ? { from: depStart, to: depEnd } : undefined
     };
 
     // 1) /api/search
