@@ -1,69 +1,108 @@
-import { NextResponse } from "next/server";
-import ccaaCapital from "@/app/data/ccaa_capital.json";
-import airports from "@/app/data/es_airports.json";
-import cities from "@/app/data/es_cities_min.json";
+// app/api/resolve/route.ts
+export const runtime = "nodejs";
 
-type City = { name: string; alt_names?: string[]; lat: number; lon: number };
-type Airport = { iata: string; name: string; city: string; lat: number; lon: number };
+import { NextRequest, NextResponse } from "next/server";
+import { redisGet, redisSet, stableHash } from "@/lib/redis";
+import { getAmadeusToken } from "@/lib/amadeus";
 
-function norm(s: string) {
-  return s.trim().toLowerCase();
+const CCAA_TO_CAPITAL: Record<string, string> = {
+  "andalucía": "Sevilla",
+  "aragón": "Zaragoza",
+  "asturias": "Oviedo",
+  "illes balears": "Palma",
+  "baleares": "Palma",
+  "islas baleares": "Palma",
+  "canarias": "Las Palmas de Gran Canaria",
+  "cantabria": "Santander",
+  "castilla-la mancha": "Toledo",
+  "castilla y león": "Valladolid",
+  "catalunya": "Barcelona",
+  "cataluña": "Barcelona",
+  "comunitat valenciana": "València",
+  "comunidad valenciana": "Valencia",
+  "extremadura": "Mérida",
+  "galicia": "Santiago de Compostela",
+  "la rioja": "Logroño",
+  "madrid": "Madrid",
+  "murcia": "Murcia",
+  "navarra": "Pamplona",
+  "euskadi": "Vitoria-Gasteiz",
+  "país vasco": "Vitoria-Gasteiz",
+  "ceuta": "Ceuta",
+  "melilla": "Melilla"
+};
+
+function normalize(s: string) {
+  return s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
 }
 
-function haversine(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * (Math.PI / 180);
-  const dLon = (lon2 - lon1) * (Math.PI / 180);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) *
-      Math.cos(lat2 * Math.PI / 180) *
-      Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(a));
-}
-
-function findCityOrCCAA(query: string): City {
-  let n = norm(query);
-
-  // Si es CCAA, usar capital
-  if (ccaaCapital[n as keyof typeof ccaaCapital]) {
-    n = norm(ccaaCapital[n as keyof typeof ccaaCapital]);
+async function amadeusLocations(keyword: string) {
+  const token = await getAmadeusToken();
+  const url = `${process.env.AMAD_BASE || "https://test.api.amadeus.com"}/v1/reference-data/locations?subType=CITY,AIRPORT&keyword=${encodeURIComponent(keyword)}&page[limit]=20`;
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!r.ok) {
+    const txt = await r.text().catch(() => "");
+    throw new Error(`Amadeus locations ${r.status}: ${txt}`);
   }
-
-  // Buscar match exacto
-  const exact = cities.find(
-    c => norm(c.name) === n || c.alt_names?.some(a => norm(a) === n)
-  );
-  if (exact) return exact;
-
-  // Fallback: prefix match
-  const prefix = cities.find(c => norm(c.name).startsWith(n));
-  if (prefix) return prefix;
-
-  throw new Error(`No se encontró ciudad o CCAA: ${query}`);
+  const json = await r.json();
+  return json?.data ?? [];
 }
 
-function nearestAirports(lat: number, lon: number, topN = 2) {
-  const scored = (airports as Airport[]).map(ap => ({
-    ...ap,
-    distance_km: haversine(lat, lon, ap.lat, ap.lon)
-  }));
-  scored.sort((a, b) => a.distance_km - b.distance_km);
-  return scored.slice(0, topN);
-}
-
-export async function POST(req: Request) {
+export async function GET(req: NextRequest) {
   try {
-    const { query, top_n = 2 } = await req.json();
-    const city = findCityOrCCAA(query);
-    const aps = nearestAirports(city.lat, city.lon, top_n);
-    return NextResponse.json({
-      label: city.name,
-      lat: city.lat,
-      lon: city.lon,
-      airports: aps
-    });
+    const { searchParams } = new URL(req.url);
+    const q = (searchParams.get("q") || "").trim();
+    if (!q) return NextResponse.json({ ok: false, error: "missing_q" }, { status: 400 });
+
+    const key = `resolve:${await stableHash({ q })}`;
+    const cached = await redisGet(key);
+    if (cached) return NextResponse.json({ ok: true, cached: true, ...cached });
+
+    // 1) ¿Es una CCAA? -> capital
+    const qNorm = normalize(q);
+    const ccaaCapital = CCAA_TO_CAPITAL[qNorm];
+    const keyword = ccaaCapital || q;
+
+    // 2) Buscar en Amadeus (CITY/AIRPORT), filtrar a España
+    const data = await amadeusLocations(keyword);
+    const es = data.filter((x: any) => x?.address?.countryCode === "ES");
+
+    // 3) Extraer ciudad principal y aeropuertos
+    const cities = es.filter((x: any) => x.type === "location" && x.subType === "CITY");
+    const airports = es.filter((x: any) => x.type === "location" && x.subType === "AIRPORT");
+
+    // Heurística: ciudad exacta por nombre o por match del keyword
+    const city = cities.find((c: any) =>
+      normalize(c.name) === normalize(keyword)
+      || normalize(c.iataCode) === normalize(keyword)
+      || (ccaaCapital && normalize(c.name) === normalize(ccaaCapital))
+    ) || cities[0] || null;
+
+    // Aeropuertos en la ciudad si hay city; si no, todos los filtrados
+    const cityIATA = city?.iataCode;
+    const cityAirports = cityIATA
+      ? airports.filter((a: any) => a?.iataCode && normalize(a?.iataCode) !== "null" && (
+          normalize(a?.address?.cityName || "") === normalize(city?.name || "")
+          || normalize(a?.relevance || "") // algunos payloads traen hints de proximidad
+        ))
+      : airports;
+
+    const result = {
+      query: q,
+      resolvedCity: city ? { name: city.name, iata: city.iataCode } : null,
+      airports: cityAirports.map((a: any) => ({
+        name: a.name,
+        iata: a.iataCode
+      })),
+      note: ccaaCapital ? `Resuelto CCAA → capital: ${ccaaCapital}` : undefined
+    };
+
+    await redisSet(key, result, 60 * 60 * 12); // 12h
+    return NextResponse.json({ ok: true, cached: false, ...result });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 400 });
+    return NextResponse.json({ ok: false, error: e?.message ?? "resolve_error" }, { status: 500 });
   }
 }
+
