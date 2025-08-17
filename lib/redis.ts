@@ -2,40 +2,42 @@
 const BASE = process.env.UPSTASH_REDIS_REST_URL!;
 const TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN!;
 
-async function upstashGET(path: string) {
-  const r = await fetch(`${BASE}/${path}`, {
-    headers: { Authorization: `Bearer ${TOKEN}` },
+function auth() {
+  if (!BASE || !TOKEN) throw new Error("Upstash: faltan env vars");
+  return { Authorization: `Bearer ${TOKEN}` };
+}
+
+/** GET key (parsea JSON si procede) */
+export async function redisGet<T = any>(key: string): Promise<T | null> {
+  const r = await fetch(`${BASE}/get/${encodeURIComponent(key)}`, {
+    headers: auth(),
     cache: "no-store",
   });
-  if (!r.ok) throw new Error(`Upstash GET error ${r.status}`);
-  return r.json();
+  if (!r.ok) throw new Error(`Upstash GET ${r.status}`);
+  const data = await r.json();
+  let v = data?.result ?? null;
+  if (typeof v === "string") {
+    try { v = JSON.parse(v); } catch {}
+  }
+  return v as T | null;
 }
 
-async function upstashPOST(path: string, body: any) {
-  const r = await fetch(`${BASE}/${path}`, {
+/** SET key con TTL en segundos usando POST /set/<key>?EX=ttl */
+export async function redisSet(key: string, value: any, ttlSec?: number) {
+  const payload = typeof value === "string" ? value : JSON.stringify(value);
+  const url = `${BASE}/set/${encodeURIComponent(key)}${ttlSec ? `?EX=${ttlSec}` : ""}`;
+  const r = await fetch(url, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+    headers: { ...auth(), "content-type": "application/json" },
+    body: payload,
+    cache: "no-store",
   });
-  if (!r.ok) throw new Error(`Upstash POST error ${r.status}`);
-  return r.json();
+  if (!r.ok) throw new Error(`Upstash SET ${r.status}`);
+  return (await r.json())?.result ?? "OK";
 }
 
-export const redis = {
-  async get<T = any>(key: string): Promise<T | null> {
-    const data = await upstashGET(`get/${encodeURIComponent(key)}`);
-    let v = data?.result ?? null;
-    if (typeof v === "string") {
-      try { v = JSON.parse(v); } catch {}
-    }
-    return v as T | null;
-  },
-  async set(key: string, value: any, opts?: { ex?: number }) {
-    // Guardamos por POST para evitar límites de URL
-    const payload = typeof value === "string" ? value : JSON.stringify(value);
-    await upstashPOST("set", { key, value: payload, EX: opts?.ex });
-  },
-};
+/** Helper: hash estable sha256 de un objeto */
+export async function stableHash(obj: any) {
+  const { createHash } = await import("crypto");
+  const canonical = (o: any): any =>
+    Array.isArray(o) ? o.
