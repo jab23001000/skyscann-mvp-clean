@@ -40,4 +40,10 @@ export async function redisSet(key: string, value: any, ttlSec?: number) {
 export async function stableHash(obj: any) {
   const { createHash } = await import("crypto");
   const canonical = (o: any): any =>
-    Array.isArray(o) ? o.
+    Array.isArray(o) ? o.map(canonical)
+    : o && typeof o === "object" && !(o instanceof Date)
+    ? Object.keys(o).sort().reduce((acc, k) => (acc[k] = canonical(o[k]), acc), {} as any)
+    : o;
+  const str = JSON.stringify(canonical(obj));
+  return createHash("sha256").update(str).digest("hex");
+}
