@@ -2,6 +2,11 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 
+// Helpers UI a prueba de nulos/indefinidos
+const d = (s?: string | null) => (typeof s === "string" && s.length >= 10 ? s.slice(0, 10) : "");
+const segs = (a?: string[] | null) => Array.isArray(a) ? a : [];
+
+
 type Airport = { code: string; city: string; name: string };
 type Offer = {
   id: string;
